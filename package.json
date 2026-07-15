@@ -1,0 +1,13 @@
+{
+  "name": "wallet-xray",
+  "version": "1.0.0",
+  "description": "Multi-chain wallet snapshot API for AI agents: balances, USD value, and activity signals across 8 EVM chains.",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "license": "MIT"
+}
