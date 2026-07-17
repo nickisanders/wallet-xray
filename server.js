@@ -221,7 +221,7 @@ const AURA_HTML = `<!doctype html>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Wallet Aura — your wallet, as art</title>
 <meta property="og:title" content="Wallet Aura">
-<meta property="og:description" content="Deterministic generative art from a wallet's real on-chain life. Live on OKX.AI.">
+<meta property="og:description" content="Deterministic generative art from a wallet's real onchain life. Live on OKX.AI.">
 <style>
 *{box-sizing:border-box;margin:0}
 body{background:#06070f;color:#e1e6f0;font-family:ui-monospace,Menlo,Consolas,monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:44px 16px}
@@ -243,7 +243,7 @@ footer{color:#828ca0;font-size:.8rem;margin-top:10px;text-align:center}
 </style></head><body>
 <h1>Wallet Aura</h1>
 <div class="tag">every wallet has an aura. see yours.</div>
-<div class="sub">generative art from real on-chain life · sibling of <a href="/">Wallet X-Ray</a> · live on <a href="https://www.okx.ai">OKX.AI</a></div>
+<div class="sub">generative art from real onchain life · sibling of <a href="/">Wallet X-Ray</a> · live on <a href="https://www.okx.ai">OKX.AI</a></div>
 <div class="card">
   <div class="row">
     <input id="addr" placeholder="0x… any EVM address" value="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045">
