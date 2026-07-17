@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('http');
+const { auraSvg, auraTraits } = require('./aura');
 
 const PORT = process.env.PORT || 8080;
 
@@ -215,6 +216,66 @@ async function scan(){
 }
 </script></body></html>`;
 
+const AURA_HTML = `<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Wallet Aura — your wallet, as art</title>
+<meta property="og:title" content="Wallet Aura">
+<meta property="og:description" content="Deterministic generative art from a wallet's real on-chain life. Live on OKX.AI.">
+<style>
+*{box-sizing:border-box;margin:0}
+body{background:#06070f;color:#e1e6f0;font-family:ui-monospace,Menlo,Consolas,monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:44px 16px}
+h1{font-size:2.2rem;margin:6px 0}
+.tag{color:#b28dff;margin-bottom:4px}
+.sub{color:#828ca0;font-size:.85rem;margin-bottom:28px;text-align:center}
+.card{background:#0d0f1e;border:1px solid #2d344b;border-radius:14px;padding:22px;max-width:560px;width:100%;margin-bottom:18px}
+.row{display:flex;gap:10px;flex-wrap:wrap}
+input{flex:1;min-width:240px;background:#0a0d1a;border:1px solid #2d344b;border-radius:8px;color:#e1e6f0;padding:12px;font:inherit}
+button{background:#b28dff;color:#1b0f35;border:0;border-radius:8px;padding:12px 22px;font:inherit;font-weight:700;cursor:pointer}
+button:disabled{opacity:.5;cursor:wait}
+#art{width:100%;border-radius:12px;margin-top:16px;display:none}
+.traits{display:flex;flex-wrap:wrap;gap:6px;margin-top:12px}
+.pill{border:1px solid #2d344b;border-radius:99px;padding:3px 12px;font-size:.78rem;color:#9aa5bd}
+.pill b{color:#b28dff}
+a{color:#56a0ff;text-decoration:none}
+footer{color:#828ca0;font-size:.8rem;margin-top:10px;text-align:center}
+.err{color:#ff7a7a;margin-top:12px}
+</style></head><body>
+<h1>Wallet Aura</h1>
+<div class="tag">every wallet has an aura. see yours.</div>
+<div class="sub">generative art from real on-chain life · sibling of <a href="/">Wallet X-Ray</a> · live on <a href="https://www.okx.ai">OKX.AI</a></div>
+<div class="card">
+  <div class="row">
+    <input id="addr" placeholder="0x… any EVM address" value="0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045">
+    <button id="go" onclick="aura()">Reveal</button>
+  </div>
+  <img id="art" alt="wallet aura">
+  <div class="traits" id="traits"></div>
+  <div id="msg"></div>
+</div>
+<footer>deterministic: same wallet, same aura · balances, chains, and activity shape the art · #OKXAI</footer>
+<script>
+async function aura(){
+  const btn=document.getElementById('go'),img=document.getElementById('art'),tr=document.getElementById('traits'),msg=document.getElementById('msg');
+  const a=document.getElementById('addr').value.trim();
+  btn.disabled=true;msg.innerHTML='<div class="sub" style="margin-top:12px">reading the chains…</div>';tr.innerHTML='';
+  try{
+    const r=await fetch('/aura?format=json&address='+encodeURIComponent(a));
+    const d=await r.json();
+    if(!r.ok){msg.innerHTML='<div class="err">'+(d.error||'error')+'</div>';btn.disabled=false;return}
+    img.src='data:image/svg+xml;utf8,'+encodeURIComponent(d.svg);img.style.display='block';
+    const t=d.traits;
+    tr.innerHTML='<span class="pill">archetype <b>'+t.archetype+'</b></span>'+
+      '<span class="pill">chains <b>'+t.activeChains+'/8</b></span>'+
+      (t.dominantChain?'<span class="pill">home <b>'+t.dominantChain+'</b></span>':'')+
+      '<span class="pill">activity <b>'+t.totalTx.toLocaleString()+' txs</b></span>'+
+      (t.delegated?'<span class="pill"><b>7702 cyborg</b></span>':'');
+    msg.innerHTML='';
+  }catch(e){msg.innerHTML='<div class="err">failed — try again</div>'}
+  btn.disabled=false;
+}
+</script></body></html>`;
+
 function send(res, status, body) {
   const json = JSON.stringify(body, null, 2);
   res.writeHead(status, {
@@ -262,6 +323,32 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, result);
     } catch (e) {
       return send(res, 500, { error: 'scan failed, try again' });
+    }
+  }
+
+  if (url.pathname === '/aura') {
+    const address = url.searchParams.get('address');
+    if (!address && (req.headers.accept || '').includes('text/html')) {
+      res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+      return res.end(AURA_HTML);
+    }
+    if (rateLimited(ip)) return send(res, 429, { error: 'rate limit: 30 requests/minute' });
+    if (!address || !ADDR_RE.test(String(address).trim())) {
+      return send(res, 400, { error: 'provide a valid EVM address: 0x + 40 hex chars', example: '/aura?address=0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' });
+    }
+    try {
+      const data = await xray(String(address).trim());
+      if (url.searchParams.get('format') === 'json') {
+        return send(res, 200, { address: data.address, traits: auraTraits(data), svg: auraSvg(data) });
+      }
+      res.writeHead(200, {
+        'content-type': 'image/svg+xml; charset=utf-8',
+        'cache-control': 'public, max-age=300',
+        'access-control-allow-origin': '*',
+      });
+      return res.end(auraSvg(data));
+    } catch (e) {
+      return send(res, 500, { error: 'aura generation failed, try again' });
     }
   }
 
