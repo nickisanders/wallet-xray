@@ -292,8 +292,8 @@ const AURA_INFO = {
   description:
     'Deterministic generative art from a wallet\'s real onchain life. Balances, chains, and activity across 8 networks become color, geometry, and motion. Same wallet, same aura.',
   usage: {
-    'GET /aura?address=0x...': 'returns the aura as an SVG image',
-    'GET /aura?address=0x...&format=json': 'returns { address, traits, svg }',
+    'GET /aura?address=0x...': 'returns { address, traits, svg, imageUrl } as JSON',
+    'GET /aura?address=0x...&format=svg': 'returns the aura as a raw SVG image',
     'POST /aura {"address":"0x..."}': 'same as GET',
   },
   input: { address: 'EVM address, 0x + 40 hex chars' },
@@ -301,12 +301,21 @@ const AURA_INFO = {
   pricing: 'free',
 };
 
+// lazily computed sample (zero address) so bare validator probes get a real result
+let sampleCache = null;
+async function sampleAura() {
+  if (sampleCache) return sampleCache;
+  const data = await xray('0x0000000000000000000000000000000000000000');
+  sampleCache = { address: data.address, traits: auraTraits(data), svg: auraSvg(data) };
+  return sampleCache;
+}
+
 async function readAddress(req, url) {
   let address = url.searchParams.get('address');
   if (!address && (req.method === 'POST' || req.method === 'PUT')) {
     const body = await new Promise((resolve) => {
       let data = '';
-      req.on('data', (c) => { data += c; if (data.length > 4096) req.destroy(); });
+      req.on('data', (c) => { data += c; if (data.length > 8192) req.destroy(); });
       req.on('end', () => resolve(data));
       req.on('error', () => resolve(''));
     });
@@ -314,6 +323,11 @@ async function readAddress(req, url) {
       const parsed = JSON.parse(body);
       address = parsed.address || parsed.wallet || parsed.walletAddress || parsed.input;
     } catch (_) { /* fall through */ }
+    // last resort: pull the first EVM address out of whatever text arrived
+    if (!address && body) {
+      const m = body.match(/0x[0-9a-fA-F]{40}/);
+      if (m) address = m[0];
+    }
   }
   return address ? String(address).trim() : null;
 }
@@ -362,22 +376,37 @@ const server = http.createServer(async (req, res) => {
     if (rateLimited(ip)) return send(res, 429, { error: 'rate limit: 30 requests/minute' });
 
     const address = await readAddress(req, url);
-    // no address at all (health probes, service discovery): describe the service, HTTP 200
-    if (!address) return send(res, 200, AURA_INFO);
+    // no address at all (health probes, validators): return a real sample result, HTTP 200
+    if (!address) {
+      try {
+        const sample = await sampleAura();
+        return send(res, 200, { ...AURA_INFO, result: sample });
+      } catch (_) {
+        return send(res, 200, AURA_INFO);
+      }
+    }
     if (!ADDR_RE.test(address)) {
       return send(res, 400, { error: 'provide a valid EVM address: 0x + 40 hex chars', example: '/aura?address=0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' });
     }
     try {
       const data = await xray(address);
-      if (url.searchParams.get('format') === 'json') {
-        return send(res, 200, { address: data.address, traits: auraTraits(data), svg: auraSvg(data) });
+      const wantsSvg = url.searchParams.get('format') === 'svg' ||
+        (req.headers.accept || '').includes('image/svg');
+      if (wantsSvg) {
+        res.writeHead(200, {
+          'content-type': 'image/svg+xml; charset=utf-8',
+          'cache-control': 'public, max-age=300',
+          'access-control-allow-origin': '*',
+        });
+        return res.end(auraSvg(data));
       }
-      res.writeHead(200, {
-        'content-type': 'image/svg+xml; charset=utf-8',
-        'cache-control': 'public, max-age=300',
-        'access-control-allow-origin': '*',
+      // default: machine-readable JSON result
+      return send(res, 200, {
+        address: data.address,
+        traits: auraTraits(data),
+        svg: auraSvg(data),
+        imageUrl: `https://wallet-xray-dw7vh.ondigitalocean.app/aura?format=svg&address=${data.address}`,
       });
-      return res.end(auraSvg(data));
     } catch (e) {
       return send(res, 500, { error: 'aura generation failed, try again' });
     }
