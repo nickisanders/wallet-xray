@@ -287,10 +287,45 @@ function send(res, status, body) {
 
 const ADDR_RE = /^0x[0-9a-fA-F]{40}$/;
 
+const AURA_INFO = {
+  service: 'Wallet Aura',
+  description:
+    'Deterministic generative art from a wallet\'s real onchain life. Balances, chains, and activity across 8 networks become color, geometry, and motion. Same wallet, same aura.',
+  usage: {
+    'GET /aura?address=0x...': 'returns the aura as an SVG image',
+    'GET /aura?address=0x...&format=json': 'returns { address, traits, svg }',
+    'POST /aura {"address":"0x..."}': 'same as GET',
+  },
+  input: { address: 'EVM address, 0x + 40 hex chars' },
+  example: '/aura?address=0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045',
+  pricing: 'free',
+};
+
+async function readAddress(req, url) {
+  let address = url.searchParams.get('address');
+  if (!address && (req.method === 'POST' || req.method === 'PUT')) {
+    const body = await new Promise((resolve) => {
+      let data = '';
+      req.on('data', (c) => { data += c; if (data.length > 4096) req.destroy(); });
+      req.on('end', () => resolve(data));
+      req.on('error', () => resolve(''));
+    });
+    try {
+      const parsed = JSON.parse(body);
+      address = parsed.address || parsed.wallet || parsed.walletAddress || parsed.input;
+    } catch (_) { /* fall through */ }
+  }
+  return address ? String(address).trim() : null;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
   const ip = req.headers['x-forwarded-for']?.split(',')[0]?.trim() || req.socket.remoteAddress;
 
+  if (req.method === 'HEAD' && ['/', '/health', '/xray', '/aura'].includes(url.pathname)) {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    return res.end();
+  }
   if (url.pathname === '/health') return send(res, 200, { status: 'ok' });
   if (url.pathname === '/' && req.method === 'GET') {
     if ((req.headers.accept || '').includes('text/html')) {
@@ -303,23 +338,15 @@ const server = http.createServer(async (req, res) => {
   if (url.pathname === '/xray') {
     if (rateLimited(ip)) return send(res, 429, { error: 'rate limit: 30 requests/minute' });
 
-    let address = url.searchParams.get('address');
-    if (!address && req.method === 'POST') {
-      const body = await new Promise((resolve) => {
-        let data = '';
-        req.on('data', (c) => { data += c; if (data.length > 4096) req.destroy(); });
-        req.on('end', () => resolve(data));
-        req.on('error', () => resolve(''));
-      });
-      try { address = JSON.parse(body).address; } catch (_) { /* fall through */ }
-    }
-
-    if (!address || !ADDR_RE.test(String(address).trim())) {
+    const address = await readAddress(req, url);
+    // no address at all (health probes, service discovery): describe the service, HTTP 200
+    if (!address) return send(res, 200, { ...INFO, example: '/xray?address=0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' });
+    if (!ADDR_RE.test(address)) {
       return send(res, 400, { error: 'provide a valid EVM address: 0x + 40 hex chars', example: '/xray?address=0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' });
     }
 
     try {
-      const result = await xray(String(address).trim());
+      const result = await xray(address);
       return send(res, 200, result);
     } catch (e) {
       return send(res, 500, { error: 'scan failed, try again' });
@@ -327,17 +354,21 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (url.pathname === '/aura') {
-    const address = url.searchParams.get('address');
-    if (!address && (req.headers.accept || '').includes('text/html')) {
+    if ((req.headers.accept || '').includes('text/html') && !url.searchParams.get('address')) {
       res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       return res.end(AURA_HTML);
     }
+    if (req.method === 'HEAD') { res.writeHead(200, { 'content-type': 'application/json' }); return res.end(); }
     if (rateLimited(ip)) return send(res, 429, { error: 'rate limit: 30 requests/minute' });
-    if (!address || !ADDR_RE.test(String(address).trim())) {
+
+    const address = await readAddress(req, url);
+    // no address at all (health probes, service discovery): describe the service, HTTP 200
+    if (!address) return send(res, 200, AURA_INFO);
+    if (!ADDR_RE.test(address)) {
       return send(res, 400, { error: 'provide a valid EVM address: 0x + 40 hex chars', example: '/aura?address=0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045' });
     }
     try {
-      const data = await xray(String(address).trim());
+      const data = await xray(address);
       if (url.searchParams.get('format') === 'json') {
         return send(res, 200, { address: data.address, traits: auraTraits(data), svg: auraSvg(data) });
       }
